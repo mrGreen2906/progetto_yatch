@@ -20,10 +20,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer  // AGGIUNTO IMPORT
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -292,7 +294,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Grid status cards CON DATI REALI
+            // Grid status cards CON DATI REALI - DIMENSIONI UNIFORMI
             YachtStatusGrid(smokeData = latestSmokeData, cameraData = cameraData)
 
             if (lastUpdate.isNotEmpty()) {
@@ -333,9 +335,9 @@ fun HomeScreen(
         )
     }
 
-    // Popup sensore completo CON DATI REALI
+    // Popup sensore completo CON DATI REALI - MIGLIORATO
     if (showSensorPopup) {
-        YachtSensorPopup(
+        ImprovedYachtSensorPopup(
             smokeData = latestSmokeData,
             history = smokeHistory,
             onDismiss = { showSensorPopup = false }
@@ -629,11 +631,11 @@ private fun YachtStatusGrid(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // SOLO sensore fumo con dati reali (no temperatura/umidità simulate)
+        // DIMENSIONI UNIFORMI per tutte le card
         YachtStatusCard(
             modifier = Modifier.weight(1f),
             icon = "🔥",
-            title = "Sensore Fumo",
+            title = "Sensore",
             value = when {
                 smokeData != null -> "${smokeData.sensor_value.toInt()}"
                 else -> "---"
@@ -647,7 +649,7 @@ private fun YachtStatusGrid(
             icon = "📊",
             title = "Status",
             value = when {
-                smokeData?.is_alert == true -> "ALLARME"
+                smokeData?.is_alert == true -> "ALERT"  // Abbreviato per evitare word wrap
                 smokeData != null -> "OK"
                 else -> "..."
             },
@@ -679,7 +681,7 @@ private fun YachtStatusCard(
     isAlert: Boolean = false
 ) {
     Card(
-        modifier = modifier,
+        modifier = modifier.height(120.dp), // ALTEZZA FISSA per uniformità
         colors = CardDefaults.cardColors(
             containerColor = if (isAlert) Color(0xFFFED7D7) else Color.White
         ),
@@ -687,33 +689,45 @@ private fun YachtStatusCard(
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp), // Padding ridotto per ottimizzare spazio
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceEvenly
         ) {
-            Text(text = icon, fontSize = 32.sp)
-
-            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = icon, fontSize = 28.sp) // Icona leggermente più piccola
 
             Text(
                 text = title,
-                fontSize = 12.sp,
+                fontSize = 11.sp, // Font size ridotto
                 color = Color(0xFF718096),
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
-            Text(
-                text = value,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = color
-            )
+            // Container per valore con altezza fissa
+            Box(
+                modifier = Modifier.height(20.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = value,
+                    fontSize = 16.sp, // Font size fisso per evitare crescita
+                    fontWeight = FontWeight.Bold,
+                    color = color,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             if (isAlert) {
                 Text(
-                    text = "ALLARME",
-                    fontSize = 10.sp,
+                    text = "ALERT",
+                    fontSize = 9.sp, // Font molto piccolo
                     color = Color(0xFFE53E3E),
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
         }
@@ -757,8 +771,9 @@ private fun PermissionCard(
     }
 }
 
+// POPUP MIGLIORATO con swipe fluido e layout centrato
 @Composable
-private fun YachtSensorPopup(
+private fun ImprovedYachtSensorPopup(
     smokeData: SmokeDetectionData?,
     history: List<HistoryRecord>,
     onDismiss: () -> Unit
@@ -773,7 +788,7 @@ private fun YachtSensorPopup(
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.75f)
+                .fillMaxHeight(0.8f) // Aumentato per dare più spazio
                 .background(Color.White, RoundedCornerShape(24.dp))
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures { _, dragAmount ->
@@ -790,64 +805,126 @@ private fun YachtSensorPopup(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Header popup
+                // Header popup - CENTRATO MEGLIO
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
+                        .padding(horizontal = 20.dp, vertical = 24.dp), // Padding verticale aumentato
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = "🔥 Sensore Gas/Fumo",
-                        fontSize = 22.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF2D3748)
                     )
                     IconButton(onClick = onDismiss) {
-                        Text("✕", fontSize = 20.sp, color = Color(0xFF718096))
+                        Text("✕", fontSize = 18.sp, color = Color(0xFF718096))
                     }
                 }
 
-                // Tab indicator
+                // Tab indicator con animazione fluida
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = 20.dp, vertical = 16.dp),
                     horizontalArrangement = Arrangement.Center
                 ) {
                     pages.forEachIndexed { index, title ->
+                        val isSelected = index == currentPage
+                        val animatedAlpha by animateFloatAsState(
+                            targetValue = if (isSelected) 1f else 0.6f,
+                            animationSpec = tween(300),
+                            label = "tab_alpha"
+                        )
+                        val animatedScale by animateFloatAsState(
+                            targetValue = if (isSelected) 1.05f else 0.95f,
+                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                            label = "tab_scale"
+                        )
+
                         Card(
                             modifier = Modifier
-                                .padding(horizontal = 4.dp)
+                                .padding(horizontal = 6.dp)
+                                .scale(animatedScale)
                                 .clickable { currentPage = index },
                             colors = CardDefaults.cardColors(
-                                containerColor = if (index == currentPage) Color(0xFF4A00E0)
+                                containerColor = if (isSelected) Color(0xFF4A00E0)
                                 else Color(0xFFF7FAFC)
+                            ),
+                            elevation = CardDefaults.cardElevation(
+                                defaultElevation = if (isSelected) 6.dp else 2.dp
                             )
                         ) {
                             Text(
                                 text = title,
-                                fontSize = 14.sp,
-                                fontWeight = if (index == currentPage) FontWeight.Bold else FontWeight.Normal,
-                                color = if (index == currentPage) Color.White else Color(0xFF718096),
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) Color.White else Color(0xFF718096),
+                                modifier = Modifier
+                                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                                    .graphicsLayer { alpha = animatedAlpha }
                             )
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                // Indicatore di pagina sottile
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 40.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    repeat(pages.size) { index ->
+                        val isSelected = index == currentPage
+                        val animatedWidth by animateDpAsState(
+                            targetValue = if (isSelected) 24.dp else 8.dp,
+                            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+                            label = "indicator_width"
+                        )
 
-                // Contenuto pagine
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 4.dp)
+                                .width(animatedWidth)
+                                .height(3.dp)
+                                .background(
+                                    if (isSelected) Color(0xFF4A00E0) else Color(0xFFE2E8F0),
+                                    RoundedCornerShape(2.dp)
+                                )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Contenuto pagine con transizione fluida
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 20.dp, vertical = 0.dp)
+                        .padding(horizontal = 20.dp)
                 ) {
-                    when (currentPage) {
-                        0 -> SensorCurrentStatusPage(smokeData)
-                        1 -> SensorHistoryPage(history)
+                    // Contenuto basato sulla pagina corrente con animazione di fade
+                    val contentAlpha by animateFloatAsState(
+                        targetValue = 1f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
+                        ),
+                        label = "content_alpha"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = contentAlpha }
+                    ) {
+                        when (currentPage) {
+                            0 -> SensorCurrentStatusPage(smokeData)
+                            1 -> SensorHistoryPage(history)
+                        }
                     }
                 }
             }
@@ -981,25 +1058,12 @@ private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
         }
 
         item {
-            // Azioni rapide
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            // Solo pulsante aggiorna - RIMOSSO "Sistema Completo"
+            OutlinedButton(
+                onClick = { },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Button(
-                    onClick = { },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A00E0))
-                ) {
-                    Text("📱 Sistema Completo", color = Color.White)
-                }
-
-                OutlinedButton(
-                    onClick = { },
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("🔄 Aggiorna")
-                }
+                Text("🔄 Aggiorna Dati")
             }
         }
     }
