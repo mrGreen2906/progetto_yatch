@@ -29,18 +29,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.progetto_yatch.utils.NotificationUtils
+import com.example.progetto_yatch.screens.SmokeDetectionData
 import kotlinx.coroutines.delay
+import kotlinx.serialization.json.*
+import okhttp3.*
+import java.io.IOException
 import kotlin.math.abs
 
-// Data classes specifiche per la HomeScreen
-data class YachtSensorData(
-    val temperature: Float = 22.5f,
-    val humidity: Float = 65.2f,
-    val gasLevel: Float = 0.02f,
-    val smokeLevel: Float = 0.01f,
-    val isAlert: Boolean = false,
-    val lastUpdate: String = "Ora"
-)
+// Importa SmokeDetectionData da SecuritySystemScreen
+// (rimuove la duplicazione)
 
 data class YachtCameraData(
     val isOnline: Boolean = true,
@@ -53,10 +50,10 @@ data class YachtCameraData(
 
 data class HistoryRecord(
     val timestamp: String,
-    val temperature: Float,
-    val humidity: Float,
-    val gasLevel: Float,
-    val isAlert: Boolean
+    val sensor_value: Double,
+    val alert_status: Int,
+    val isAlert: Boolean,
+    val alert_text: String
 )
 
 data class CameraRecording(
@@ -78,16 +75,23 @@ fun HomeScreen(
     var showSensorPopup by remember { mutableStateOf(false) }
     var showCameraPopup by remember { mutableStateOf(false) }
 
-    // Dati simulati
-    var sensorData by remember { mutableStateOf(YachtSensorData()) }
+    // Dati reali dell'endpoint
+    var nodeRedUrl by remember { mutableStateOf("https://eaa4-188-95-73-113.ngrok-free.app") }
+    var latestSmokeData by remember { mutableStateOf<SmokeDetectionData?>(null) }
+    var smokeHistory by remember { mutableStateOf<List<HistoryRecord>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+    var lastUpdate by remember { mutableStateOf("") }
+
+    // Dati telecamera (mantenuti come simulazione leggera)
     var cameraData by remember { mutableStateOf(YachtCameraData()) }
-    var sensorHistory by remember { mutableStateOf<List<HistoryRecord>>(emptyList()) }
     var cameraRecordings by remember { mutableStateOf<List<CameraRecording>>(emptyList()) }
 
     // Stati UI per gestione permessi
     var hasNotificationPermission by remember { mutableStateOf(true) }
     var showPermissionDialog by remember { mutableStateOf(false) }
-    var lastAlertTime by remember { mutableStateOf(0L) }
+
+    val client = remember { OkHttpClient() }
 
     // Launcher per richiedere permessi
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -99,104 +103,149 @@ fun HomeScreen(
         }
     }
 
-    // Controlla permessi all'avvio
+    // Funzione per caricare i dati reali dal tuo endpoint
+    fun loadSmokeData() {
+        if (!nodeRedUrl.startsWith("http")) return
+
+        isLoading = true
+        errorMessage = ""
+        val baseUrl = nodeRedUrl.trimEnd('/')
+        val apiUrl = "$baseUrl/api/latest"
+
+        val request = Request.Builder()
+            .url(apiUrl)
+            .addHeader("ngrok-skip-browser-warning", "true")
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                isLoading = false
+                errorMessage = "Errore connessione: ${e.message}"
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                isLoading = false
+                if (response.isSuccessful) {
+                    try {
+                        val responseBody = response.body?.string()
+                        if (responseBody != null) {
+                            val json = Json.parseToJsonElement(responseBody).jsonObject
+                            val latestObj = json["latest"]?.jsonObject
+
+                            if (latestObj != null) {
+                                latestSmokeData = SmokeDetectionData(
+                                    time = latestObj["time"]?.jsonPrimitive?.content ?: "",
+                                    alert_status = latestObj["alert_status"]?.jsonPrimitive?.int ?: 0,
+                                    sensor_value = latestObj["sensor_value"]?.jsonPrimitive?.double ?: 0.0,
+                                    is_alert = latestObj["is_alert"]?.jsonPrimitive?.boolean ?: false,
+                                    alert_text = latestObj["alert_text"]?.jsonPrimitive?.content ?: "Unknown"
+                                )
+                                lastUpdate = "Aggiornato: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
+                                errorMessage = ""
+
+                                // Invia notifica se c'è un allarme
+                                if (latestSmokeData?.is_alert == true) {
+                                    NotificationUtils.sendSmokeAlert(
+                                        context = context,
+                                        sensorValue = latestSmokeData?.sensor_value ?: 0.0,
+                                        alertStatus = latestSmokeData?.alert_status ?: 0,
+                                        alertText = latestSmokeData?.alert_text ?: "Allarme rilevato"
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        errorMessage = "Errore parsing: ${e.message}"
+                    }
+                } else {
+                    errorMessage = "Errore HTTP: ${response.code}"
+                }
+            }
+        })
+    }
+
+    // Funzione per caricare lo storico
+    fun loadSmokeHistory() {
+        if (!nodeRedUrl.startsWith("http")) return
+
+        val baseUrl = nodeRedUrl.trimEnd('/')
+        val apiUrl = "$baseUrl/api/smoke-data"
+
+        val request = Request.Builder()
+            .url(apiUrl)
+            .addHeader("ngrok-skip-browser-warning", "true")
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                // Ignora errori per lo storico
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (response.isSuccessful) {
+                    try {
+                        val responseBody = response.body?.string()
+                        if (responseBody != null) {
+                            val json = Json.parseToJsonElement(responseBody).jsonObject
+                            val dataArray = json["data"]?.jsonArray
+
+                            val parsedData = dataArray?.map { item ->
+                                val obj = item.jsonObject
+                                HistoryRecord(
+                                    timestamp = obj["time"]?.jsonPrimitive?.content ?: "",
+                                    sensor_value = obj["sensor_value"]?.jsonPrimitive?.double ?: 0.0,
+                                    alert_status = obj["alert_status"]?.jsonPrimitive?.int ?: 0,
+                                    isAlert = obj["is_alert"]?.jsonPrimitive?.boolean ?: false,
+                                    alert_text = obj["alert_text"]?.jsonPrimitive?.content ?: "Unknown"
+                                )
+                            } ?: emptyList()
+
+                            smokeHistory = parsedData.take(10)
+                        }
+                    } catch (e: Exception) {
+                        // Ignora errori parsing per lo storico
+                    }
+                }
+            }
+        })
+    }
+
+    // Carica le preferenze salvate e i dati all'avvio
     LaunchedEffect(Unit) {
         NotificationUtils.createNotificationChannel(context)
         hasNotificationPermission = NotificationUtils.areNotificationsEnabled(context)
 
-        // Genera storico iniziale
-        sensorHistory = generateInitialHistory()
+        try {
+            val savedUrl = com.example.progetto_yatch.services.SmokeMonitoringPreferences.getApiUrl(context)
+            if (savedUrl != null) {
+                nodeRedUrl = savedUrl
+            }
+        } catch (e: Exception) {
+            // Usa URL di default se non disponibile
+        }
+
+        // Carica dati iniziali
+        loadSmokeData()
+        loadSmokeHistory()
         cameraRecordings = generateInitialRecordings()
     }
 
-    // Simulazione aggiornamento dati sensori
+    // Aggiornamento automatico ogni 30 secondi
     LaunchedEffect(Unit) {
         while (true) {
-            delay(2000) // Aggiorna ogni 2 secondi
-
-            val newGasLevel = (Math.random() * 0.12).toFloat() // 0-120 ppm
-            val newTemperature = 18f + (Math.random() * 15).toFloat() // 18-33°C
-            val newHumidity = 45f + (Math.random() * 35).toFloat() // 45-80%
-            val newSmokeLevel = (Math.random() * 0.08).toFloat()
-
-            sensorData = sensorData.copy(
-                temperature = newTemperature,
-                humidity = newHumidity,
-                gasLevel = newGasLevel,
-                smokeLevel = newSmokeLevel,
-                lastUpdate = "Ora"
-            )
-
-            // Aggiorna storico ogni 10 aggiornamenti
-            if ((Math.random() * 10).toInt() == 0) {
-                val newRecord = HistoryRecord(
-                    timestamp = "${(Math.random() * 60).toInt()} min fa",
-                    temperature = newTemperature,
-                    humidity = newHumidity,
-                    gasLevel = newGasLevel,
-                    isAlert = newGasLevel > 0.05f
-                )
-                sensorHistory = listOf(newRecord) + sensorHistory.take(19) // Mantieni ultimi 20
-            }
+            delay(30000) // 30 secondi
+            loadSmokeData()
         }
     }
 
-    // Simulazione aggiornamento telecamera
+    // Simulazione leggera per telecamera (solo per non lasciare vuoto)
     LaunchedEffect(Unit) {
         while (true) {
-            delay(15000) // Aggiorna ogni 15 secondi
-
+            delay(60000) // 1 minuto
             cameraData = cameraData.copy(
-                detectedPeople = (Math.random() * 3).toInt(),
+                detectedPeople = if (Math.random() > 0.8) (Math.random() * 2).toInt() else 0,
                 lastMotion = if (Math.random() > 0.7) "Ora" else cameraData.lastMotion
             )
-
-            // Simula nuove registrazioni occasionalmente
-            if (Math.random() > 0.8) {
-                val newRecording = CameraRecording(
-                    id = "rec_${System.currentTimeMillis()}",
-                    timestamp = "Ora",
-                    duration = "${(2 + Math.random() * 8).toInt()} min",
-                    hasMotion = Math.random() > 0.4
-                )
-                cameraRecordings = listOf(newRecording) + cameraRecordings.take(9) // Mantieni ultime 10
-            }
-        }
-    }
-
-    // Sistema di allarmi intelligente
-    LaunchedEffect(sensorData.gasLevel, sensorData.smokeLevel) {
-        val currentTime = System.currentTimeMillis()
-        val gasThreshold = 0.05f // 50 ppm
-        val smokeThreshold = 0.04f
-
-        val isGasAlert = sensorData.gasLevel > gasThreshold
-        val isSmokeAlert = sensorData.smokeLevel > smokeThreshold
-        val shouldAlert = (isGasAlert || isSmokeAlert) && !sensorData.isAlert
-
-        if (shouldAlert && (currentTime - lastAlertTime) > 5000) { // Evita spam notifiche
-            sensorData = sensorData.copy(isAlert = true)
-            lastAlertTime = currentTime
-
-            // Invia notifica se permessi abilitati
-            if (hasNotificationPermission && NotificationUtils.areNotificationsEnabled(context)) {
-                val alertType = when {
-                    isGasAlert && isSmokeAlert -> "Gas e Fumo"
-                    isGasAlert -> "Gas"
-                    else -> "Fumo"
-                }
-
-                NotificationUtils.sendSensorAlert(
-                    context = context,
-                    sensorType = alertType,
-                    value = if (isGasAlert) "${(sensorData.gasLevel * 1000).toInt()} ppm"
-                    else "${(sensorData.smokeLevel * 1000).toInt()} ppm",
-                    threshold = if (isGasAlert) "${(gasThreshold * 1000).toInt()} ppm"
-                    else "${(smokeThreshold * 1000).toInt()} ppm"
-                )
-            }
-        } else if (!isGasAlert && !isSmokeAlert && sensorData.isAlert) {
-            sensorData = sensorData.copy(isAlert = false)
         }
     }
 
@@ -217,32 +266,44 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(20.dp)
         ) {
-            // Header principale
+            // Header principale (SENZA ROTELLINA)
             YachtHeader(
-                sensorData = sensorData,
+                smokeData = latestSmokeData,
                 hasNotificationPermission = hasNotificationPermission,
                 onRequestPermission = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
-                },
-                onNavigateToSecurity = onNavigateToSecurity
+                }
             )
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Card principale yacht con sensori
+            // Card principale yacht con sensori REALI
             YachtMainCard(
-                sensorData = sensorData,
+                smokeData = latestSmokeData,
                 cameraData = cameraData,
                 onSensorClick = { showSensorPopup = true },
-                onCameraClick = { showCameraPopup = true }
+                onCameraClick = { showCameraPopup = true },
+                isLoading = isLoading,
+                errorMessage = errorMessage,
+                onRefresh = { loadSmokeData() }
             )
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Grid status cards
-            YachtStatusGrid(sensorData = sensorData, cameraData = cameraData)
+            // Grid status cards CON DATI REALI
+            YachtStatusGrid(smokeData = latestSmokeData, cameraData = cameraData)
+
+            if (lastUpdate.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = lastUpdate,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
+            }
 
             // Card permessi se necessario
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
@@ -272,16 +333,16 @@ fun HomeScreen(
         )
     }
 
-    // Popup sensore completo
+    // Popup sensore completo CON DATI REALI
     if (showSensorPopup) {
         YachtSensorPopup(
-            sensorData = sensorData,
-            history = sensorHistory,
+            smokeData = latestSmokeData,
+            history = smokeHistory,
             onDismiss = { showSensorPopup = false }
         )
     }
 
-    // Popup telecamera completo
+    // Popup telecamera
     if (showCameraPopup) {
         YachtCameraPopup(
             cameraData = cameraData,
@@ -293,13 +354,10 @@ fun HomeScreen(
 
 @Composable
 private fun YachtHeader(
-    sensorData: YachtSensorData,
+    smokeData: SmokeDetectionData?,
     hasNotificationPermission: Boolean,
-    onRequestPermission: () -> Unit,
-    onNavigateToSecurity: () -> Unit
+    onRequestPermission: () -> Unit
 ) {
-    val context = LocalContext.current
-
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -315,41 +373,31 @@ private fun YachtHeader(
 
             Text(
                 text = when {
-                    sensorData.isAlert -> "⚠️ Attenzione richiesta"
+                    smokeData?.is_alert == true -> "🚨 ALLARME FUMO ATTIVO"
                     !hasNotificationPermission -> "🔔 Abilita notifiche"
-                    else -> "✅ Tutto sotto controllo"
+                    smokeData != null -> "✅ Sistema attivo"
+                    else -> "🔄 Caricamento..."
                 },
                 fontSize = 16.sp,
                 color = when {
-                    sensorData.isAlert -> Color(0xFFE53E3E)
+                    smokeData?.is_alert == true -> Color(0xFFE53E3E)
                     !hasNotificationPermission -> Color(0xFFD69E2E)
-                    else -> Color(0xFF38A169)
+                    smokeData != null -> Color(0xFF38A169)
+                    else -> Color(0xFF718096)
                 },
                 fontWeight = FontWeight.Medium
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Notifiche button
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
-                IconButton(
-                    onClick = onRequestPermission,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(Color(0xFFED8936), CircleShape)
-                ) {
-                    Text("🔔", fontSize = 20.sp, color = Color.White)
-                }
-            }
-
-            // Settings button
+        // SOLO pulsante notifiche se necessario (NESSUNA ROTELLINA)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
             IconButton(
-                onClick = onNavigateToSecurity,
+                onClick = onRequestPermission,
                 modifier = Modifier
                     .size(48.dp)
-                    .background(Color(0xFF4A00E0), CircleShape)
+                    .background(Color(0xFFED8936), CircleShape)
             ) {
-                Text("⚙️", fontSize = 22.sp, color = Color.White)
+                Text("🔔", fontSize = 20.sp, color = Color.White)
             }
         }
     }
@@ -357,16 +405,21 @@ private fun YachtHeader(
 
 @Composable
 private fun YachtMainCard(
-    sensorData: YachtSensorData,
+    smokeData: SmokeDetectionData?,
     cameraData: YachtCameraData,
     onSensorClick: () -> Unit,
-    onCameraClick: () -> Unit
+    onCameraClick: () -> Unit,
+    isLoading: Boolean,
+    errorMessage: String,
+    onRefresh: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(420.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(
+            containerColor = if (smokeData?.is_alert == true) Color(0xFFFFEBEE) else Color.White
+        ),
         elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
         shape = RoundedCornerShape(24.dp)
     ) {
@@ -379,36 +432,75 @@ private fun YachtMainCard(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Logo Alertify principale
-                Text(
-                    text = "🚨",
-                    fontSize = 120.sp,
-                    modifier = Modifier.offset(y = 5.dp)
-                )
+                // Logo Alertify principale con stato
+                if (smokeData?.is_alert == true) {
+                    // Animazione di allarme
+                    val infiniteTransition = rememberInfiniteTransition(label = "alarm_animation")
+                    val alertScale by infiniteTransition.animateFloat(
+                        initialValue = 1f,
+                        targetValue = 1.2f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(500),
+                            repeatMode = RepeatMode.Reverse
+                        ),
+                        label = "alert_scale"
+                    )
+
+                    Text(
+                        text = "🚨",
+                        fontSize = (120 * alertScale).sp,
+                        modifier = Modifier.offset(y = 5.dp),
+                        color = Color(0xFFE53E3E)
+                    )
+                } else {
+                    Text(
+                        text = "🚨",
+                        fontSize = 120.sp,
+                        modifier = Modifier.offset(y = 5.dp)
+                    )
+                }
 
                 Text(
                     text = "ALERTIFY SYSTEM",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFF718096),
+                    color = if (smokeData?.is_alert == true) Color(0xFFE53E3E) else Color(0xFF718096),
                     letterSpacing = 3.sp
                 )
 
+                if (smokeData?.is_alert == true) {
+                    Text(
+                        text = smokeData.alert_text,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE53E3E),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(40.dp))
 
-                // Sensori interattivi
+                // Sensori con dati reali
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly
                 ) {
-                    // Sensore Gas/Fumo
+                    // Sensore Gas/Fumo CON DATI REALI
                     YachtSensorButton(
                         icon = "🔥",
-                        label = "Sensore",
-                        sublabel = "Gas/Fumo",
-                        isAlert = sensorData.isAlert,
-                        value = "${(sensorData.gasLevel * 1000).toInt()}ppm",
-                        onClick = onSensorClick
+                        label = "Sensore Fumo",
+                        sublabel = if (isLoading) "Caricando..." else "Gas/Fumo",
+                        isAlert = smokeData?.is_alert == true,
+                        value = when {
+                            isLoading -> "..."
+                            smokeData != null -> "${smokeData.sensor_value.toInt()}"
+                            errorMessage.isNotEmpty() -> "Errore"
+                            else -> "Non disponibile"
+                        },
+                        onClick = onSensorClick,
+                        onRefresh = onRefresh,
+                        showRefresh = errorMessage.isNotEmpty()
                     )
 
                     // Telecamera
@@ -419,6 +511,16 @@ private fun YachtMainCard(
                         isAlert = false,
                         value = if (cameraData.isOnline) "Online" else "Offline",
                         onClick = onCameraClick
+                    )
+                }
+
+                if (errorMessage.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = errorMessage,
+                        color = Color(0xFFE53E3E),
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center
                     )
                 }
             }
@@ -433,7 +535,9 @@ private fun YachtSensorButton(
     sublabel: String,
     isAlert: Boolean,
     value: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onRefresh: (() -> Unit)? = null,
+    showRefresh: Boolean = false
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "sensor_animation")
 
@@ -504,48 +608,63 @@ private fun YachtSensorButton(
             color = if (isAlert) Color(0xFFE53E3E) else Color(0xFF4A00E0),
             fontWeight = if (isAlert) FontWeight.Bold else FontWeight.Normal
         )
+
+        if (showRefresh && onRefresh != null) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "🔄",
+                fontSize = 12.sp,
+                modifier = Modifier.clickable { onRefresh() }
+            )
+        }
     }
 }
 
 @Composable
 private fun YachtStatusGrid(
-    sensorData: YachtSensorData,
+    smokeData: SmokeDetectionData?,
     cameraData: YachtCameraData
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        YachtStatusCard(
-            modifier = Modifier.weight(1f),
-            icon = "🌡️",
-            title = "Temperatura",
-            value = "${sensorData.temperature.toInt()}°C",
-            color = when {
-                sensorData.temperature > 30 -> Color(0xFFE53E3E)
-                sensorData.temperature < 15 -> Color(0xFF3182CE)
-                else -> Color(0xFF38A169)
-            }
-        )
-
-        YachtStatusCard(
-            modifier = Modifier.weight(1f),
-            icon = "💧",
-            title = "Umidità",
-            value = "${sensorData.humidity.toInt()}%",
-            color = when {
-                sensorData.humidity > 70 -> Color(0xFFD69E2E)
-                else -> Color(0xFF3182CE)
-            }
-        )
-
+        // SOLO sensore fumo con dati reali (no temperatura/umidità simulate)
         YachtStatusCard(
             modifier = Modifier.weight(1f),
             icon = "🔥",
-            title = "Gas",
-            value = "${(sensorData.gasLevel * 1000).toInt()}ppm",
-            color = if (sensorData.isAlert) Color(0xFFE53E3E) else Color(0xFF38A169),
-            isAlert = sensorData.isAlert
+            title = "Sensore Fumo",
+            value = when {
+                smokeData != null -> "${smokeData.sensor_value.toInt()}"
+                else -> "---"
+            },
+            color = if (smokeData?.is_alert == true) Color(0xFFE53E3E) else Color(0xFF38A169),
+            isAlert = smokeData?.is_alert == true
+        )
+
+        YachtStatusCard(
+            modifier = Modifier.weight(1f),
+            icon = "📊",
+            title = "Status",
+            value = when {
+                smokeData?.is_alert == true -> "ALLARME"
+                smokeData != null -> "OK"
+                else -> "..."
+            },
+            color = when {
+                smokeData?.is_alert == true -> Color(0xFFE53E3E)
+                smokeData != null -> Color(0xFF38A169)
+                else -> Color(0xFF718096)
+            },
+            isAlert = smokeData?.is_alert == true
+        )
+
+        YachtStatusCard(
+            modifier = Modifier.weight(1f),
+            icon = "📹",
+            title = "Camera",
+            value = if (cameraData.isOnline) "Online" else "Offline",
+            color = if (cameraData.isOnline) Color(0xFF38A169) else Color(0xFFE53E3E)
         )
     }
 }
@@ -627,7 +746,7 @@ private fun PermissionCard(
                     color = Color(0xFFD69E2E)
                 )
                 Text(
-                    text = "Ricevi avvisi istantanei per emergenze, allarmi sensori e attività sospette",
+                    text = "Ricevi avvisi istantanei per emergenze e allarmi sensori",
                     fontSize = 13.sp,
                     color = Color(0xFF744210),
                     lineHeight = 18.sp
@@ -640,7 +759,7 @@ private fun PermissionCard(
 
 @Composable
 private fun YachtSensorPopup(
-    sensorData: YachtSensorData,
+    smokeData: SmokeDetectionData?,
     history: List<HistoryRecord>,
     onDismiss: () -> Unit
 ) {
@@ -727,7 +846,7 @@ private fun YachtSensorPopup(
                         .padding(horizontal = 20.dp, vertical = 0.dp)
                 ) {
                     when (currentPage) {
-                        0 -> SensorCurrentStatusPage(sensorData)
+                        0 -> SensorCurrentStatusPage(smokeData)
                         1 -> SensorHistoryPage(history)
                     }
                 }
@@ -737,17 +856,17 @@ private fun YachtSensorPopup(
 }
 
 @Composable
-private fun SensorCurrentStatusPage(sensorData: YachtSensorData) {
+private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            // Status principale
+            // Status principale CON DATI REALI
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (sensorData.isAlert) Color(0xFFE53E3E) else Color(0xFF38A169)
+                    containerColor = if (smokeData?.is_alert == true) Color(0xFFE53E3E) else Color(0xFF38A169)
                 ),
                 shape = RoundedCornerShape(20.dp)
             ) {
@@ -758,74 +877,78 @@ private fun SensorCurrentStatusPage(sensorData: YachtSensorData) {
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = if (sensorData.isAlert) "⚠️" else "✅",
+                        text = if (smokeData?.is_alert == true) "⚠️" else "✅",
                         fontSize = 48.sp
                     )
                     Text(
-                        text = if (sensorData.isAlert) "ALLARME ATTIVO" else "AMBIENTE SICURO",
+                        text = smokeData?.alert_text ?: if (smokeData != null) "AMBIENTE SICURO" else "CARICAMENTO...",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White,
                         textAlign = TextAlign.Center
                     )
-                    Text(
-                        text = "Ultimo aggiornamento: ${sensorData.lastUpdate}",
-                        fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.8f)
-                    )
+                    if (smokeData != null) {
+                        Text(
+                            text = "Ultimo aggiornamento: ${smokeData.time}",
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.8f)
+                        )
+                    }
                 }
             }
         }
 
-        item {
-            // Metriche dettagliate
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFC))
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp)
+        if (smokeData != null) {
+            item {
+                // Metriche dettagliate CON DATI REALI
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFC))
                 ) {
-                    Text(
-                        text = "📊 Metriche Ambientali",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2D3748),
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
+                    Column(
+                        modifier = Modifier.padding(20.dp)
+                    ) {
+                        Text(
+                            text = "📊 Metriche Sensore",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF2D3748),
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
 
-                    SensorMetricRow(
-                        icon = "🌡️",
-                        label = "Temperatura",
-                        value = "${sensorData.temperature.toInt()}°C",
-                        isNormal = sensorData.temperature in 15f..30f
-                    )
+                        SensorMetricRow(
+                            icon = "🔥",
+                            label = "Valore Sensore",
+                            value = "${smokeData.sensor_value.toInt()}",
+                            isNormal = !smokeData.is_alert
+                        )
 
-                    SensorMetricRow(
-                        icon = "💧",
-                        label = "Umidità Relativa",
-                        value = "${sensorData.humidity.toInt()}%",
-                        isNormal = sensorData.humidity <= 70f
-                    )
+                        SensorMetricRow(
+                            icon = "📊",
+                            label = "Status Allarme",
+                            value = "${smokeData.alert_status}",
+                            isNormal = smokeData.alert_status == 0
+                        )
 
-                    SensorMetricRow(
-                        icon = "☁️",
-                        label = "Livello Gas",
-                        value = "${(sensorData.gasLevel * 1000).toInt()} ppm",
-                        isNormal = sensorData.gasLevel <= 0.05f
-                    )
+                        SensorMetricRow(
+                            icon = "⚠️",
+                            label = "Stato Sistema",
+                            value = if (smokeData.is_alert) "ALLARME" else "NORMALE",
+                            isNormal = !smokeData.is_alert
+                        )
 
-                    SensorMetricRow(
-                        icon = "🌫️",
-                        label = "Livello Fumo",
-                        value = "${(sensorData.smokeLevel * 1000).toInt()} ppm",
-                        isNormal = sensorData.smokeLevel <= 0.04f
-                    )
+                        SensorMetricRow(
+                            icon = "📝",
+                            label = "Messaggio",
+                            value = smokeData.alert_text,
+                            isNormal = !smokeData.is_alert
+                        )
+                    }
                 }
             }
         }
 
-        if (sensorData.isAlert) {
+        if (smokeData?.is_alert == true) {
             item {
                 // Alert dettagliato
                 Card(
@@ -841,21 +964,13 @@ private fun SensorCurrentStatusPage(sensorData: YachtSensorData) {
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text(
-                                text = "Condizioni Anomale Rilevate",
+                                text = "Allarme Fumo Attivo",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = Color(0xFFE53E3E)
                             )
                             Text(
-                                text = buildString {
-                                    if (sensorData.gasLevel > 0.05f) {
-                                        append("Gas: ${(sensorData.gasLevel * 1000).toInt()} ppm (soglia: 50 ppm)")
-                                    }
-                                    if (sensorData.smokeLevel > 0.04f) {
-                                        if (isNotEmpty()) append(" • ")
-                                        append("Fumo: ${(sensorData.smokeLevel * 1000).toInt()} ppm (soglia: 40 ppm)")
-                                    }
-                                },
+                                text = "Valore: ${smokeData.sensor_value.toInt()} • Status: ${smokeData.alert_status} • ${smokeData.alert_text}",
                                 fontSize = 13.sp,
                                 color = Color(0xFF744210)
                             )
@@ -876,14 +991,14 @@ private fun SensorCurrentStatusPage(sensorData: YachtSensorData) {
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A00E0))
                 ) {
-                    Text("📱 Dettagli", color = Color.White)
+                    Text("📱 Sistema Completo", color = Color.White)
                 }
 
                 OutlinedButton(
                     onClick = { },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text("⚙️ Configura")
+                    Text("🔄 Aggiorna")
                 }
             }
         }
@@ -951,10 +1066,15 @@ private fun SensorHistoryPage(history: List<HistoryRecord>) {
                                 color = Color(0xFF718096)
                             )
                             Text(
-                                text = "${record.temperature.toInt()}°C • ${record.humidity.toInt()}% • ${(record.gasLevel * 1000).toInt()}ppm",
+                                text = "Valore: ${record.sensor_value.toInt()} • Status: ${record.alert_status}",
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = Color(0xFF2D3748)
+                            )
+                            Text(
+                                text = record.alert_text,
+                                fontSize = 12.sp,
+                                color = if (record.isAlert) Color(0xFFE53E3E) else Color(0xFF718096)
                             )
                         }
                         Text(
@@ -1402,24 +1522,7 @@ private fun CameraStatusRow(
     }
 }
 
-// Funzioni helper per generare dati iniziali
-private fun generateInitialHistory(): List<HistoryRecord> {
-    return (1..15).map { index ->
-        val hoursAgo = index * 2
-        val temp = 20f + (Math.random() * 8).toFloat()
-        val humidity = 50f + (Math.random() * 25).toFloat()
-        val gas = (Math.random() * 0.08).toFloat()
-
-        HistoryRecord(
-            timestamp = "${hoursAgo}h fa",
-            temperature = temp,
-            humidity = humidity,
-            gasLevel = gas,
-            isAlert = gas > 0.05f
-        )
-    }
-}
-
+// Funzione helper per generare dati iniziali telecamera
 private fun generateInitialRecordings(): List<CameraRecording> {
     return (1..8).map { index ->
         val hoursAgo = index * 4
