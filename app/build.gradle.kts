@@ -73,6 +73,14 @@ dependencies {
     // WebView integration
     implementation("androidx.compose.ui:ui-viewbinding:1.5.4")
 
+    implementation("androidx.navigation:navigation-compose:2.7.5")
+
+    // Lottie per animazioni
+    implementation("com.airbnb.android:lottie-compose:6.1.0")
+
+    // Permessi runtime
+    implementation("com.google.accompanist:accompanist-permissions:0.32.0")
+
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
