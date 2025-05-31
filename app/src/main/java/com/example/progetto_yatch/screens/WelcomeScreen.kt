@@ -70,7 +70,7 @@ fun WelcomeScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "👁️",
+                    text = "🚨",
                     fontSize = 60.sp,
                     color = Color.White
                 )
@@ -78,9 +78,9 @@ fun WelcomeScreen(
 
             Spacer(modifier = Modifier.height(40.dp))
 
-            // Titolo dell'app
+            // Titolo dell'app aggiornato
             Text(
-                text = "Yacht Security",
+                text = "Alertify",
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
@@ -90,7 +90,7 @@ fun WelcomeScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Sistema di sicurezza avanzato\nper il tuo yacht",
+                text = "Sistema di sicurezza intelligente\nper yacht e imbarcazioni",
                 fontSize = 18.sp,
                 color = Color.White.copy(alpha = 0.8f),
                 textAlign = TextAlign.Center,
@@ -112,7 +112,7 @@ fun WelcomeScreen(
                 shape = RoundedCornerShape(28.dp)
             ) {
                 Text(
-                    text = "🚀 Inizia",
+                    text = "🚀 Inizia Monitoraggio",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -122,7 +122,7 @@ fun WelcomeScreen(
 
             // Info versione
             Text(
-                text = "v1.0.0 • Powered by AI",
+                text = "v1.0.0 • Powered by AI Detection",
                 fontSize = 12.sp,
                 color = Color.White.copy(alpha = 0.6f)
             )

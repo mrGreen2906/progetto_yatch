@@ -34,17 +34,18 @@ fun LoadingScreen(
 
     // Progresso del caricamento
     var loadingProgress by remember { mutableStateOf(0f) }
-    var loadingText by remember { mutableStateOf("Inizializzazione...") }
+    var loadingText by remember { mutableStateOf("Inizializzazione Alertify...") }
 
-    // Simulazione del caricamento
+    // Simulazione del caricamento con messaggi aggiornati
     LaunchedEffect(Unit) {
         val steps = listOf(
-            "Inizializzazione..." to 0.1f,
-            "Connessione ai sensori..." to 0.3f,
-            "Configurazione telecamere..." to 0.5f,
-            "Verifica sistema sicurezza..." to 0.7f,
-            "Caricamento interfaccia..." to 0.9f,
-            "Completato!" to 1.0f
+            "Inizializzazione Alertify..." to 0.1f,
+            "Connessione sensori fumo..." to 0.25f,
+            "Configurazione telecamere..." to 0.4f,
+            "Verifica sistema rilevamento..." to 0.6f,
+            "Attivazione allarmi..." to 0.8f,
+            "Caricamento interfaccia..." to 0.95f,
+            "Alertify pronto!" to 1.0f
         )
 
         for ((text, progress) in steps) {
@@ -91,7 +92,7 @@ fun LoadingScreen(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(32.dp)
         ) {
-            // Logo con animazione di rotazione (simuliamo l'icona dell'occhio)
+            // Logo con animazione di rotazione (aggiornato per Alertify)
             Box(
                 modifier = Modifier
                     .size(100.dp)
@@ -103,7 +104,7 @@ fun LoadingScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "👁️",
+                    text = "🚨",
                     fontSize = 50.sp,
                     color = Color.White
                 )
@@ -163,14 +164,14 @@ fun LoadingScreen(
 
             Spacer(modifier = Modifier.height(60.dp))
 
-            // Indicatori di stato
+            // Indicatori di stato aggiornati per Alertify
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                StatusIndicator("🏠", loadingProgress > 0.2f)
-                StatusIndicator("📹", loadingProgress > 0.4f)
-                StatusIndicator("🛡️", loadingProgress > 0.6f)
-                StatusIndicator("🔔", loadingProgress > 0.8f)
+                StatusIndicator("🔥", loadingProgress > 0.2f) // Sensori fumo
+                StatusIndicator("📹", loadingProgress > 0.4f) // Telecamere
+                StatusIndicator("🚨", loadingProgress > 0.6f) // Sistema allarmi
+                StatusIndicator("📱", loadingProgress > 0.8f) // App
             }
         }
     }

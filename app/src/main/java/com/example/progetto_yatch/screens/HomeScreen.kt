@@ -2,6 +2,8 @@ package com.example.progetto_yatch.screens
 
 import android.Manifest
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -26,10 +28,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
-import com.google.accompanist.permissions.shouldShowRationale
 import com.example.progetto_yatch.utils.NotificationUtils
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -69,7 +67,7 @@ data class CameraRecording(
     val thumbnailPath: String? = null
 )
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToSecurity: () -> Unit
@@ -86,20 +84,25 @@ fun HomeScreen(
     var sensorHistory by remember { mutableStateOf<List<HistoryRecord>>(emptyList()) }
     var cameraRecordings by remember { mutableStateOf<List<CameraRecording>>(emptyList()) }
 
-    // Stati UI
-    var hasShownPermissionRationale by remember { mutableStateOf(false) }
+    // Stati UI per gestione permessi
+    var hasNotificationPermission by remember { mutableStateOf(true) }
+    var showPermissionDialog by remember { mutableStateOf(false) }
     var lastAlertTime by remember { mutableStateOf(0L) }
 
-    // Gestione permessi notifiche per Android 13+
-    val notificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        rememberPermissionState(permission = Manifest.permission.POST_NOTIFICATIONS)
-    } else {
-        null
+    // Launcher per richiedere permessi
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasNotificationPermission = isGranted
+        if (!isGranted) {
+            showPermissionDialog = true
+        }
     }
 
-    // Inizializzazione
+    // Controlla permessi all'avvio
     LaunchedEffect(Unit) {
         NotificationUtils.createNotificationChannel(context)
+        hasNotificationPermission = NotificationUtils.areNotificationsEnabled(context)
 
         // Genera storico iniziale
         sensorHistory = generateInitialHistory()
@@ -176,7 +179,7 @@ fun HomeScreen(
             lastAlertTime = currentTime
 
             // Invia notifica se permessi abilitati
-            if (NotificationUtils.areNotificationsEnabled(context)) {
+            if (hasNotificationPermission && NotificationUtils.areNotificationsEnabled(context)) {
                 val alertType = when {
                     isGasAlert && isSmokeAlert -> "Gas e Fumo"
                     isGasAlert -> "Gas"
@@ -217,9 +220,12 @@ fun HomeScreen(
             // Header principale
             YachtHeader(
                 sensorData = sensorData,
-                notificationPermission = notificationPermission,
-                hasShownRationale = hasShownPermissionRationale,
-                onRationaleShown = { hasShownPermissionRationale = true },
+                hasNotificationPermission = hasNotificationPermission,
+                onRequestPermission = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                },
                 onNavigateToSecurity = onNavigateToSecurity
             )
 
@@ -239,17 +245,31 @@ fun HomeScreen(
             YachtStatusGrid(sensorData = sensorData, cameraData = cameraData)
 
             // Card permessi se necessario
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                notificationPermission != null &&
-                !notificationPermission.status.isGranted) {
-
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
                 Spacer(modifier = Modifier.height(16.dp))
                 PermissionCard(
-                    notificationPermission = notificationPermission,
-                    showRationale = notificationPermission.status.shouldShowRationale
+                    onRequestPermission = {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
                 )
             }
         }
+    }
+
+    // Dialog per spiegare l'importanza dei permessi
+    if (showPermissionDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionDialog = false },
+            title = { Text("Permessi Notifiche") },
+            text = {
+                Text("Le notifiche sono essenziali per ricevere allarmi di sicurezza in tempo reale. Puoi abilitarle dalle impostazioni dell'app.")
+            },
+            confirmButton = {
+                TextButton(onClick = { showPermissionDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
     }
 
     // Popup sensore completo
@@ -271,13 +291,11 @@ fun HomeScreen(
     }
 }
 
-@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 private fun YachtHeader(
     sensorData: YachtSensorData,
-    notificationPermission: com.google.accompanist.permissions.PermissionState?,
-    hasShownRationale: Boolean,
-    onRationaleShown: () -> Unit,
+    hasNotificationPermission: Boolean,
+    onRequestPermission: () -> Unit,
     onNavigateToSecurity: () -> Unit
 ) {
     val context = LocalContext.current
@@ -289,7 +307,7 @@ private fun YachtHeader(
     ) {
         Column {
             Text(
-                text = "🛥️ Yacht Security",
+                text = "🚨 Alertify",
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF1A202C)
@@ -298,13 +316,13 @@ private fun YachtHeader(
             Text(
                 text = when {
                     sensorData.isAlert -> "⚠️ Attenzione richiesta"
-                    !NotificationUtils.areNotificationsEnabled(context) -> "🔔 Abilita notifiche"
+                    !hasNotificationPermission -> "🔔 Abilita notifiche"
                     else -> "✅ Tutto sotto controllo"
                 },
                 fontSize = 16.sp,
                 color = when {
                     sensorData.isAlert -> Color(0xFFE53E3E)
-                    !NotificationUtils.areNotificationsEnabled(context) -> Color(0xFFD69E2E)
+                    !hasNotificationPermission -> Color(0xFFD69E2E)
                     else -> Color(0xFF38A169)
                 },
                 fontWeight = FontWeight.Medium
@@ -313,17 +331,9 @@ private fun YachtHeader(
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             // Notifiche button
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                notificationPermission != null &&
-                !notificationPermission.status.isGranted) {
-
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
                 IconButton(
-                    onClick = {
-                        if (notificationPermission.status.shouldShowRationale && !hasShownRationale) {
-                            onRationaleShown()
-                        }
-                        notificationPermission.launchPermissionRequest()
-                    },
+                    onClick = onRequestPermission,
                     modifier = Modifier
                         .size(48.dp)
                         .background(Color(0xFFED8936), CircleShape)
@@ -369,15 +379,15 @@ private fun YachtMainCard(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Logo Yacht principale
+                // Logo Alertify principale
                 Text(
-                    text = "🛥️",
+                    text = "🚨",
                     fontSize = 120.sp,
                     modifier = Modifier.offset(y = 5.dp)
                 )
 
                 Text(
-                    text = "MY YACHT",
+                    text = "ALERTIFY SYSTEM",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF718096),
@@ -591,17 +601,15 @@ private fun YachtStatusCard(
     }
 }
 
-@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 private fun PermissionCard(
-    notificationPermission: com.google.accompanist.permissions.PermissionState,
-    showRationale: Boolean
+    onRequestPermission: () -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF5E6)),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { notificationPermission.launchPermissionRequest() }
+            .clickable { onRequestPermission() }
     ) {
         Row(
             modifier = Modifier
@@ -619,11 +627,7 @@ private fun PermissionCard(
                     color = Color(0xFFD69E2E)
                 )
                 Text(
-                    text = if (showRationale) {
-                        "Le notifiche sono essenziali per ricevere allarmi di sicurezza critici in tempo reale"
-                    } else {
-                        "Ricevi avvisi istantanei per emergenze, allarmi sensori e attività sospette"
-                    },
+                    text = "Ricevi avvisi istantanei per emergenze, allarmi sensori e attività sospette",
                     fontSize = 13.sp,
                     color = Color(0xFF744210),
                     lineHeight = 18.sp
