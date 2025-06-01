@@ -119,10 +119,14 @@ object SmokeMonitoringPreferences {
 
         if (enabled) {
             getApiUrl(context)?.let { url ->
+                // Avvia sia WorkManager che Foreground Service per massima affidabilità
                 SmokeMonitoringWorker.startMonitoring(context, url)
+                SmokeMonitoringForegroundService.start(context, url)
             }
         } else {
+            // Ferma entrambi i servizi
             SmokeMonitoringWorker.stopMonitoring(context)
+            SmokeMonitoringForegroundService.stop(context)
         }
     }
 

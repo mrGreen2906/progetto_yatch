@@ -96,7 +96,7 @@ fun SecuritySystemScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SmokeDetectionTab() {
-    var nodeRedUrl by remember { mutableStateOf("https://eaa4-188-95-73-113.ngrok-free.app") }
+    var nodeRedUrl by remember { mutableStateOf("https://game-romantic-gnat.ngrok-free.app") }
     var latestData by remember { mutableStateOf<SmokeDetectionData?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
@@ -239,7 +239,7 @@ fun SmokeDetectionTab() {
                             }
                         },
                         label = { Text("Endpoint API Sensori") },
-                        placeholder = { Text("https://xyz789.ngrok-free.app") },
+                        placeholder = { Text("https://game-romantic-gnat.ngrok-free.app") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )
@@ -557,7 +557,7 @@ fun SystemHealthTab() {
 
 @Composable
 fun LiveMonitorTab() {
-    var nodeRedUrl by remember { mutableStateOf("https://eaa4-188-95-73-113.ngrok-free.app") }
+    var nodeRedUrl by remember { mutableStateOf("https://game-romantic-gnat.ngrok-free.app") }
     var latestData by remember { mutableStateOf<SmokeDetectionData?>(null) }
     var isAutoRefresh by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
@@ -647,7 +647,7 @@ fun LiveMonitorTab() {
                         value = nodeRedUrl,
                         onValueChange = { nodeRedUrl = it },
                         label = { Text("Endpoint API Live") },
-                        placeholder = { Text("https://xyz789.ngrok-free.app") },
+                        placeholder = { Text("https://game-romantic-gnat.ngrok-free.app") },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true
                     )

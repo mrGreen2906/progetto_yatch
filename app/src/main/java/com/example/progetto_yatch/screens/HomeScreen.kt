@@ -78,7 +78,7 @@ fun HomeScreen(
     var showCameraPopup by remember { mutableStateOf(false) }
 
     // Dati reali dell'endpoint
-    var nodeRedUrl by remember { mutableStateOf("https://eaa4-188-95-73-113.ngrok-free.app") }
+    var nodeRedUrl by remember { mutableStateOf("https://game-romantic-gnat.ngrok-free.app") }
     var latestSmokeData by remember { mutableStateOf<SmokeDetectionData?>(null) }
     var smokeHistory by remember { mutableStateOf<List<HistoryRecord>>(emptyList()) }
     var isLoading by remember { mutableStateOf(false) }
@@ -629,9 +629,9 @@ private fun YachtStatusGrid(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(16.dp) // Spazio aumentato
     ) {
-        // DIMENSIONI UNIFORMI per tutte le card
+        // CARD PIÙ GRANDI
         YachtStatusCard(
             modifier = Modifier.weight(1f),
             icon = "🔥",
@@ -649,7 +649,7 @@ private fun YachtStatusGrid(
             icon = "📊",
             title = "Status",
             value = when {
-                smokeData?.is_alert == true -> "ALERT"  // Abbreviato per evitare word wrap
+                smokeData?.is_alert == true -> "ALERT"
                 smokeData != null -> "OK"
                 else -> "..."
             },
