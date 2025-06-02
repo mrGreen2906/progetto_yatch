@@ -20,7 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer  // AGGIUNTO IMPORT
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -31,24 +31,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.progetto_yatch.utils.NotificationUtils
-import com.example.progetto_yatch.screens.SmokeDetectionData
+import com.example.progetto_yatch.services.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
 import okhttp3.*
 import java.io.IOException
 import kotlin.math.abs
-
-// Importa SmokeDetectionData da SecuritySystemScreen
-// (rimuove la duplicazione)
-
-data class YachtCameraData(
-    val isOnline: Boolean = true,
-    val recordingStatus: String = "Attiva",
-    val lastMotion: String = "5 minuti fa",
-    val detectedPeople: Int = 0,
-    val motionSensitivity: Int = 75,
-    val nightVision: Boolean = true
-)
 
 data class HistoryRecord(
     val timestamp: String,
@@ -58,42 +47,38 @@ data class HistoryRecord(
     val alert_text: String
 )
 
-data class CameraRecording(
-    val id: String,
-    val timestamp: String,
-    val duration: String,
-    val hasMotion: Boolean,
-    val thumbnailPath: String? = null
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
-    onNavigateToSecurity: () -> Unit
+    onNavigateToSecurity: () -> Unit,
+    onNavigateToCamera: () -> Unit
 ) {
     val context = LocalContext.current
 
     // Stati per popup
     var showSensorPopup by remember { mutableStateOf(false) }
-    var showCameraPopup by remember { mutableStateOf(false) }
 
-    // Dati reali dell'endpoint
+    // Dati reali dell'endpoint fumo
     var nodeRedUrl by remember { mutableStateOf("https://game-romantic-gnat.ngrok-free.app") }
     var latestSmokeData by remember { mutableStateOf<SmokeDetectionData?>(null) }
     var smokeHistory by remember { mutableStateOf<List<HistoryRecord>>(emptyList()) }
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf("") }
-    var lastUpdate by remember { mutableStateOf("") }
+    var smokeIsLoading by remember { mutableStateOf(false) }
+    var smokeErrorMessage by remember { mutableStateOf("") }
+    var smokLastUpdate by remember { mutableStateOf("") }
 
-    // Dati telecamera (mantenuti come simulazione leggera)
-    var cameraData by remember { mutableStateOf(YachtCameraData()) }
-    var cameraRecordings by remember { mutableStateOf<List<CameraRecording>>(emptyList()) }
+    // Dati reali della telecamera
+    var cameraStatus by remember { mutableStateOf<CameraStatus?>(null) }
+    var cameraAlerts by remember { mutableStateOf<List<DetectionAlert>>(emptyList()) }
+    var cameraDetections by remember { mutableStateOf<List<RecentDetection>>(emptyList()) }
+    var cameraIsLoading by remember { mutableStateOf(false) }
+    var cameraErrorMessage by remember { mutableStateOf("") }
+    var cameraLastUpdate by remember { mutableStateOf("") }
 
     // Stati UI per gestione permessi
     var hasNotificationPermission by remember { mutableStateOf(true) }
     var showPermissionDialog by remember { mutableStateOf(false) }
 
-    val client = remember { OkHttpClient() }
+    val smokeClient = remember { OkHttpClient() }
 
     // Launcher per richiedere permessi
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -105,12 +90,12 @@ fun HomeScreen(
         }
     }
 
-    // Funzione per caricare i dati reali dal tuo endpoint
+    // Funzione per caricare i dati reali del fumo
     fun loadSmokeData() {
         if (!nodeRedUrl.startsWith("http")) return
 
-        isLoading = true
-        errorMessage = ""
+        smokeIsLoading = true
+        smokeErrorMessage = ""
         val baseUrl = nodeRedUrl.trimEnd('/')
         val apiUrl = "$baseUrl/api/latest"
 
@@ -119,14 +104,14 @@ fun HomeScreen(
             .addHeader("ngrok-skip-browser-warning", "true")
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
+        smokeClient.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
-                isLoading = false
-                errorMessage = "Errore connessione: ${e.message}"
+                smokeIsLoading = false
+                smokeErrorMessage = "Errore connessione: ${e.message}"
             }
 
             override fun onResponse(call: Call, response: Response) {
-                isLoading = false
+                smokeIsLoading = false
                 if (response.isSuccessful) {
                     try {
                         val responseBody = response.body?.string()
@@ -142,8 +127,8 @@ fun HomeScreen(
                                     is_alert = latestObj["is_alert"]?.jsonPrimitive?.boolean ?: false,
                                     alert_text = latestObj["alert_text"]?.jsonPrimitive?.content ?: "Unknown"
                                 )
-                                lastUpdate = "Aggiornato: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
-                                errorMessage = ""
+                                smokLastUpdate = "Aggiornato: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
+                                smokeErrorMessage = ""
 
                                 // Invia notifica se c'è un allarme
                                 if (latestSmokeData?.is_alert == true) {
@@ -157,16 +142,66 @@ fun HomeScreen(
                             }
                         }
                     } catch (e: Exception) {
-                        errorMessage = "Errore parsing: ${e.message}"
+                        smokeErrorMessage = "Errore parsing: ${e.message}"
                     }
                 } else {
-                    errorMessage = "Errore HTTP: ${response.code}"
+                    smokeErrorMessage = "Errore HTTP: ${response.code}"
                 }
             }
         })
     }
 
-    // Funzione per caricare lo storico
+    // Funzione per caricare i dati della telecamera
+    suspend fun loadCameraData() {
+        cameraIsLoading = true
+        cameraErrorMessage = ""
+
+        try {
+            // Carica stato telecamera
+            CameraApiService.getCameraStatus().fold(
+                onSuccess = { status ->
+                    cameraStatus = status
+                    cameraLastUpdate = "Aggiornato: ${java.text.SimpleDateFormat("HH:mm:ss").format(java.util.Date())}"
+                },
+                onFailure = { error ->
+                    cameraErrorMessage = "Errore camera: ${error.message}"
+                }
+            )
+
+            // Carica allarmi
+            CameraApiService.getPendingAlerts().fold(
+                onSuccess = { alerts ->
+                    cameraAlerts = alerts
+                    // Invia notifiche per nuovi intrusi
+                    alerts.forEach { alert ->
+                        if (alert.type == "INTRUSO_RILEVATO") {
+                            NotificationUtils.sendCameraAlert(
+                                context = context,
+                                alertType = "Intruso Rilevato",
+                                message = "${alert.message} - Area: ${alert.area}"
+                            )
+                        }
+                    }
+                },
+                onFailure = { /* Ignora errori allarmi */ }
+            )
+
+            // Carica rilevamenti recenti
+            CameraApiService.getRecentDetections().fold(
+                onSuccess = { detections ->
+                    cameraDetections = detections
+                },
+                onFailure = { /* Ignora errori rilevamenti */ }
+            )
+
+        } catch (e: Exception) {
+            cameraErrorMessage = "Errore generale: ${e.message}"
+        } finally {
+            cameraIsLoading = false
+        }
+    }
+
+    // Funzione per caricare lo storico fumo
     fun loadSmokeHistory() {
         if (!nodeRedUrl.startsWith("http")) return
 
@@ -178,7 +213,7 @@ fun HomeScreen(
             .addHeader("ngrok-skip-browser-warning", "true")
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
+        smokeClient.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 // Ignora errori per lo storico
             }
@@ -229,7 +264,7 @@ fun HomeScreen(
         // Carica dati iniziali
         loadSmokeData()
         loadSmokeHistory()
-        cameraRecordings = generateInitialRecordings()
+        loadCameraData()
     }
 
     // Aggiornamento automatico ogni 30 secondi
@@ -237,17 +272,7 @@ fun HomeScreen(
         while (true) {
             delay(30000) // 30 secondi
             loadSmokeData()
-        }
-    }
-
-    // Simulazione leggera per telecamera (solo per non lasciare vuoto)
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(60000) // 1 minuto
-            cameraData = cameraData.copy(
-                detectedPeople = if (Math.random() > 0.8) (Math.random() * 2).toInt() else 0,
-                lastMotion = if (Math.random() > 0.7) "Ora" else cameraData.lastMotion
-            )
+            loadCameraData()
         }
     }
 
@@ -268,9 +293,10 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(20.dp)
         ) {
-            // Header principale (SENZA ROTELLINA)
+            // Header principale
             YachtHeader(
                 smokeData = latestSmokeData,
+                cameraAlerts = cameraAlerts.size,
                 hasNotificationPermission = hasNotificationPermission,
                 onRequestPermission = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -284,23 +310,35 @@ fun HomeScreen(
             // Card principale yacht con sensori REALI
             YachtMainCard(
                 smokeData = latestSmokeData,
-                cameraData = cameraData,
+                cameraStatus = cameraStatus,
+                cameraAlerts = cameraAlerts.size,
                 onSensorClick = { showSensorPopup = true },
-                onCameraClick = { showCameraPopup = true },
-                isLoading = isLoading,
-                errorMessage = errorMessage,
-                onRefresh = { loadSmokeData() }
+                onCameraClick = onNavigateToCamera,
+                smokeIsLoading = smokeIsLoading,
+                cameraIsLoading = cameraIsLoading,
+                smokeErrorMessage = smokeErrorMessage,
+                cameraErrorMessage = cameraErrorMessage,
+                onRefreshSmoke = { loadSmokeData() },
+                onRefreshCamera = {
+                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+                        loadCameraData()
+                    }
+                }
             )
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Grid status cards CON DATI REALI - DIMENSIONI UNIFORMI
-            YachtStatusGrid(smokeData = latestSmokeData, cameraData = cameraData)
+            // Grid status cards CON DATI REALI
+            YachtStatusGrid(
+                smokeData = latestSmokeData,
+                cameraStatus = cameraStatus,
+                cameraAlerts = cameraAlerts.size
+            )
 
-            if (lastUpdate.isNotEmpty()) {
+            if (smokLastUpdate.isNotEmpty() || cameraLastUpdate.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = lastUpdate,
+                    text = if (smokLastUpdate.isNotEmpty()) smokLastUpdate else cameraLastUpdate,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
@@ -335,7 +373,7 @@ fun HomeScreen(
         )
     }
 
-    // Popup sensore completo CON DATI REALI - MIGLIORATO
+    // Popup sensore completo CON DATI REALI
     if (showSensorPopup) {
         ImprovedYachtSensorPopup(
             smokeData = latestSmokeData,
@@ -343,20 +381,12 @@ fun HomeScreen(
             onDismiss = { showSensorPopup = false }
         )
     }
-
-    // Popup telecamera
-    if (showCameraPopup) {
-        YachtCameraPopup(
-            cameraData = cameraData,
-            recordings = cameraRecordings,
-            onDismiss = { showCameraPopup = false }
-        )
-    }
 }
 
 @Composable
 private fun YachtHeader(
     smokeData: SmokeDetectionData?,
+    cameraAlerts: Int,
     hasNotificationPermission: Boolean,
     onRequestPermission: () -> Unit
 ) {
@@ -376,13 +406,14 @@ private fun YachtHeader(
             Text(
                 text = when {
                     smokeData?.is_alert == true -> "🚨 ALLARME FUMO ATTIVO"
+                    cameraAlerts > 0 -> "🚨 ${cameraAlerts} INTRUSI RILEVATI"
                     !hasNotificationPermission -> "🔔 Abilita notifiche"
                     smokeData != null -> "✅ Sistema attivo"
                     else -> "🔄 Caricamento..."
                 },
                 fontSize = 16.sp,
                 color = when {
-                    smokeData?.is_alert == true -> Color(0xFFE53E3E)
+                    smokeData?.is_alert == true || cameraAlerts > 0 -> Color(0xFFE53E3E)
                     !hasNotificationPermission -> Color(0xFFD69E2E)
                     smokeData != null -> Color(0xFF38A169)
                     else -> Color(0xFF718096)
@@ -391,7 +422,7 @@ private fun YachtHeader(
             )
         }
 
-        // SOLO pulsante notifiche se necessario (NESSUNA ROTELLINA)
+        // Pulsante notifiche se necessario
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
             IconButton(
                 onClick = onRequestPermission,
@@ -408,19 +439,26 @@ private fun YachtHeader(
 @Composable
 private fun YachtMainCard(
     smokeData: SmokeDetectionData?,
-    cameraData: YachtCameraData,
+    cameraStatus: CameraStatus?,
+    cameraAlerts: Int,
     onSensorClick: () -> Unit,
     onCameraClick: () -> Unit,
-    isLoading: Boolean,
-    errorMessage: String,
-    onRefresh: () -> Unit
+    smokeIsLoading: Boolean,
+    cameraIsLoading: Boolean,
+    smokeErrorMessage: String,
+    cameraErrorMessage: String,
+    onRefreshSmoke: () -> Unit,
+    onRefreshCamera: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(420.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (smokeData?.is_alert == true) Color(0xFFFFEBEE) else Color.White
+            containerColor = when {
+                smokeData?.is_alert == true || cameraAlerts > 0 -> Color(0xFFFFEBEE)
+                else -> Color.White
+            }
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
         shape = RoundedCornerShape(24.dp)
@@ -435,7 +473,7 @@ private fun YachtMainCard(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Logo Alertify principale con stato
-                if (smokeData?.is_alert == true) {
+                if (smokeData?.is_alert == true || cameraAlerts > 0) {
                     // Animazione di allarme
                     val infiniteTransition = rememberInfiniteTransition(label = "alarm_animation")
                     val alertScale by infiniteTransition.animateFloat(
@@ -466,19 +504,34 @@ private fun YachtMainCard(
                     text = "ALERTIFY SYSTEM",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (smokeData?.is_alert == true) Color(0xFFE53E3E) else Color(0xFF718096),
+                    color = when {
+                        smokeData?.is_alert == true || cameraAlerts > 0 -> Color(0xFFE53E3E)
+                        else -> Color(0xFF718096)
+                    },
                     letterSpacing = 3.sp
                 )
 
-                if (smokeData?.is_alert == true) {
-                    Text(
-                        text = smokeData.alert_text,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFFE53E3E),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                when {
+                    smokeData?.is_alert == true -> {
+                        Text(
+                            text = smokeData.alert_text,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFE53E3E),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    cameraAlerts > 0 -> {
+                        Text(
+                            text = "$cameraAlerts intrusi rilevati!",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFE53E3E),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(40.dp))
@@ -492,34 +545,42 @@ private fun YachtMainCard(
                     YachtSensorButton(
                         icon = "🔥",
                         label = "Sensore Fumo",
-                        sublabel = if (isLoading) "Caricando..." else "Gas/Fumo",
+                        sublabel = if (smokeIsLoading) "Caricando..." else "Gas/Fumo",
                         isAlert = smokeData?.is_alert == true,
                         value = when {
-                            isLoading -> "..."
+                            smokeIsLoading -> "..."
                             smokeData != null -> "${smokeData.sensor_value.toInt()}"
-                            errorMessage.isNotEmpty() -> "Errore"
+                            smokeErrorMessage.isNotEmpty() -> "Errore"
                             else -> "Non disponibile"
                         },
                         onClick = onSensorClick,
-                        onRefresh = onRefresh,
-                        showRefresh = errorMessage.isNotEmpty()
+                        onRefresh = onRefreshSmoke,
+                        showRefresh = smokeErrorMessage.isNotEmpty()
                     )
 
-                    // Telecamera
+                    // Telecamera CON DATI REALI
                     YachtSensorButton(
                         icon = "📹",
                         label = "Camera",
-                        sublabel = "Sicurezza",
-                        isAlert = false,
-                        value = if (cameraData.isOnline) "Online" else "Offline",
-                        onClick = onCameraClick
+                        sublabel = if (cameraIsLoading) "Caricando..." else "Sicurezza",
+                        isAlert = cameraAlerts > 0,
+                        value = when {
+                            cameraIsLoading -> "..."
+                            cameraStatus?.camera?.connected == true -> "Online"
+                            cameraStatus?.camera?.connected == false -> "Offline"
+                            cameraErrorMessage.isNotEmpty() -> "Errore"
+                            else -> "Non disponibile"
+                        },
+                        onClick = onCameraClick,
+                        onRefresh = onRefreshCamera,
+                        showRefresh = cameraErrorMessage.isNotEmpty()
                     )
                 }
 
-                if (errorMessage.isNotEmpty()) {
+                if (smokeErrorMessage.isNotEmpty() || cameraErrorMessage.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = errorMessage,
+                        text = smokeErrorMessage.ifEmpty { cameraErrorMessage },
                         color = Color(0xFFE53E3E),
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center
@@ -625,13 +686,14 @@ private fun YachtSensorButton(
 @Composable
 private fun YachtStatusGrid(
     smokeData: SmokeDetectionData?,
-    cameraData: YachtCameraData
+    cameraStatus: CameraStatus?,
+    cameraAlerts: Int
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp) // Spazio aumentato
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // CARD PIÙ GRANDI
+        // Sensore Fumo
         YachtStatusCard(
             modifier = Modifier.weight(1f),
             icon = "🔥",
@@ -644,29 +706,41 @@ private fun YachtStatusGrid(
             isAlert = smokeData?.is_alert == true
         )
 
+        // Stato Sistema
         YachtStatusCard(
             modifier = Modifier.weight(1f),
             icon = "📊",
             title = "Status",
             value = when {
-                smokeData?.is_alert == true -> "ALERT"
-                smokeData != null -> "OK"
+                smokeData?.is_alert == true || cameraAlerts > 0 -> "ALERT"
+                smokeData != null && cameraStatus?.camera?.connected == true -> "OK"
                 else -> "..."
             },
             color = when {
-                smokeData?.is_alert == true -> Color(0xFFE53E3E)
-                smokeData != null -> Color(0xFF38A169)
+                smokeData?.is_alert == true || cameraAlerts > 0 -> Color(0xFFE53E3E)
+                smokeData != null && cameraStatus?.camera?.connected == true -> Color(0xFF38A169)
                 else -> Color(0xFF718096)
             },
-            isAlert = smokeData?.is_alert == true
+            isAlert = smokeData?.is_alert == true || cameraAlerts > 0
         )
 
+        // Camera con dati reali
         YachtStatusCard(
             modifier = Modifier.weight(1f),
             icon = "📹",
             title = "Camera",
-            value = if (cameraData.isOnline) "Online" else "Offline",
-            color = if (cameraData.isOnline) Color(0xFF38A169) else Color(0xFFE53E3E)
+            value = when {
+                cameraAlerts > 0 -> "$cameraAlerts Intrusi"
+                cameraStatus?.camera?.connected == true -> "Online"
+                cameraStatus?.camera?.connected == false -> "Offline"
+                else -> "..."
+            },
+            color = when {
+                cameraAlerts > 0 -> Color(0xFFE53E3E)
+                cameraStatus?.camera?.connected == true -> Color(0xFF38A169)
+                else -> Color(0xFFE53E3E)
+            },
+            isAlert = cameraAlerts > 0
         )
     }
 }
@@ -681,7 +755,7 @@ private fun YachtStatusCard(
     isAlert: Boolean = false
 ) {
     Card(
-        modifier = modifier.height(120.dp), // ALTEZZA FISSA per uniformità
+        modifier = modifier.height(120.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (isAlert) Color(0xFFFED7D7) else Color.White
         ),
@@ -691,29 +765,28 @@ private fun YachtStatusCard(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(12.dp), // Padding ridotto per ottimizzare spazio
+                .padding(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceEvenly
         ) {
-            Text(text = icon, fontSize = 28.sp) // Icona leggermente più piccola
+            Text(text = icon, fontSize = 28.sp)
 
             Text(
                 text = title,
-                fontSize = 11.sp, // Font size ridotto
+                fontSize = 11.sp,
                 color = Color(0xFF718096),
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
-            // Container per valore con altezza fissa
             Box(
                 modifier = Modifier.height(20.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = value,
-                    fontSize = 16.sp, // Font size fisso per evitare crescita
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = color,
                     maxLines = 1,
@@ -724,7 +797,7 @@ private fun YachtStatusCard(
             if (isAlert) {
                 Text(
                     text = "ALERT",
-                    fontSize = 9.sp, // Font molto piccolo
+                    fontSize = 9.sp,
                     color = Color(0xFFE53E3E),
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
@@ -771,7 +844,7 @@ private fun PermissionCard(
     }
 }
 
-// POPUP MIGLIORATO con swipe fluido e layout centrato
+// POPUP MIGLIORATO per sensore fumo (codice esistente rimane uguale)
 @Composable
 private fun ImprovedYachtSensorPopup(
     smokeData: SmokeDetectionData?,
@@ -788,7 +861,7 @@ private fun ImprovedYachtSensorPopup(
         Box(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.8f) // Aumentato per dare più spazio
+                .fillMaxHeight(0.8f)
                 .background(Color.White, RoundedCornerShape(24.dp))
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures { _, dragAmount ->
@@ -805,11 +878,11 @@ private fun ImprovedYachtSensorPopup(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Header popup - CENTRATO MEGLIO
+                // Header popup
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 24.dp), // Padding verticale aumentato
+                        .padding(horizontal = 20.dp, vertical = 24.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -824,7 +897,7 @@ private fun ImprovedYachtSensorPopup(
                     }
                 }
 
-                // Tab indicator con animazione fluida
+                // Tab indicator
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -870,7 +943,7 @@ private fun ImprovedYachtSensorPopup(
                     }
                 }
 
-                // Indicatore di pagina sottile
+                // Indicatore di pagina
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -900,13 +973,12 @@ private fun ImprovedYachtSensorPopup(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Contenuto pagine con transizione fluida
+                // Contenuto pagine
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 20.dp)
                 ) {
-                    // Contenuto basato sulla pagina corrente con animazione di fade
                     val contentAlpha by animateFloatAsState(
                         targetValue = 1f,
                         animationSpec = spring(
@@ -932,6 +1004,7 @@ private fun ImprovedYachtSensorPopup(
     }
 }
 
+// Resto delle funzioni rimangono identiche...
 @Composable
 private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
     LazyColumn(
@@ -939,7 +1012,6 @@ private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            // Status principale CON DATI REALI
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -977,7 +1049,6 @@ private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
 
         if (smokeData != null) {
             item {
-                // Metriche dettagliate CON DATI REALI
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFC))
@@ -1027,7 +1098,6 @@ private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
 
         if (smokeData?.is_alert == true) {
             item {
-                // Alert dettagliato
                 Card(
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFFED7D7))
                 ) {
@@ -1058,7 +1128,6 @@ private fun SensorCurrentStatusPage(smokeData: SmokeDetectionData?) {
         }
 
         item {
-            // Solo pulsante aggiorna - RIMOSSO "Sistema Completo"
             OutlinedButton(
                 onClick = { },
                 modifier = Modifier.fillMaxWidth()
@@ -1189,412 +1258,5 @@ private fun SensorMetricRow(
                 fontSize = 16.sp
             )
         }
-    }
-}
-
-@Composable
-private fun YachtCameraPopup(
-    cameraData: YachtCameraData,
-    recordings: List<CameraRecording>,
-    onDismiss: () -> Unit
-) {
-    var currentPage by remember { mutableStateOf(0) }
-    val pages = listOf("📹 Live View", "📼 Registrazioni")
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .fillMaxHeight(0.8f)
-                .background(Color.White, RoundedCornerShape(24.dp))
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures { _, dragAmount ->
-                        if (abs(dragAmount) > 80) {
-                            currentPage = if (dragAmount > 0) {
-                                (currentPage - 1).coerceAtLeast(0)
-                            } else {
-                                (currentPage + 1).coerceAtMost(pages.size - 1)
-                            }
-                        }
-                    }
-                }
-        ) {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Header popup
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "📹 Telecamera Sicurezza",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2D3748)
-                    )
-                    IconButton(onClick = onDismiss) {
-                        Text("✕", fontSize = 20.sp, color = Color(0xFF718096))
-                    }
-                }
-
-                // Tab indicator
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    pages.forEachIndexed { index, title ->
-                        Card(
-                            modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .clickable { currentPage = index },
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (index == currentPage) Color(0xFF4A00E0)
-                                else Color(0xFFF7FAFC)
-                            )
-                        ) {
-                            Text(
-                                text = title,
-                                fontSize = 14.sp,
-                                fontWeight = if (index == currentPage) FontWeight.Bold else FontWeight.Normal,
-                                color = if (index == currentPage) Color.White else Color(0xFF718096),
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Contenuto pagine
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 20.dp)
-                ) {
-                    when (currentPage) {
-                        0 -> CameraLiveViewPage(cameraData)
-                        1 -> CameraRecordingsPage(recordings)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CameraLiveViewPage(cameraData: YachtCameraData) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            // Live view principale
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(220.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A202C)),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (cameraData.isOnline) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text("📹", fontSize = 64.sp, color = Color.White)
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .background(Color(0xFFE53E3E), CircleShape)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "LIVE",
-                                    fontSize = 14.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    } else {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text("📵", fontSize = 64.sp, color = Color.Gray)
-                            Text(
-                                text = "TELECAMERA OFFLINE",
-                                fontSize = 14.sp,
-                                color = Color.Gray,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            // Status e informazioni
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFC))
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp)
-                ) {
-                    Text(
-                        text = "📊 Stato Telecamera",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF2D3748),
-                        modifier = Modifier.padding(bottom = 16.dp)
-                    )
-
-                    CameraStatusRow(
-                        icon = "🟢",
-                        label = "Connessione",
-                        value = if (cameraData.isOnline) "Online" else "Offline",
-                        isGood = cameraData.isOnline
-                    )
-
-                    CameraStatusRow(
-                        icon = "📼",
-                        label = "Registrazione",
-                        value = cameraData.recordingStatus,
-                        isGood = cameraData.recordingStatus == "Attiva"
-                    )
-
-                    CameraStatusRow(
-                        icon = "🏃",
-                        label = "Ultimo Movimento",
-                        value = cameraData.lastMotion,
-                        isGood = true
-                    )
-
-                    CameraStatusRow(
-                        icon = "👥",
-                        label = "Persone Rilevate",
-                        value = "${cameraData.detectedPeople}",
-                        isGood = cameraData.detectedPeople == 0
-                    )
-
-                    CameraStatusRow(
-                        icon = "🌙",
-                        label = "Visione Notturna",
-                        value = if (cameraData.nightVision) "Attiva" else "Disattiva",
-                        isGood = cameraData.nightVision
-                    )
-
-                    CameraStatusRow(
-                        icon = "🎚️",
-                        label = "Sensibilità Movimento",
-                        value = "${cameraData.motionSensitivity}%",
-                        isGood = true
-                    )
-                }
-            }
-        }
-
-        item {
-            // Controlli rapidi
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Button(
-                        onClick = { },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4A00E0))
-                    ) {
-                        Text("📱 Visualizza", color = Color.White)
-                    }
-
-                    OutlinedButton(
-                        onClick = { },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("📸 Snapshot")
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = { },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("⚙️ Impostazioni")
-                    }
-
-                    OutlinedButton(
-                        onClick = { },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text("🔄 Riavvia")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CameraRecordingsPage(recordings: List<CameraRecording>) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        item {
-            Text(
-                text = "📼 Registrazioni Recenti",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF2D3748),
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-        }
-
-        if (recordings.isEmpty()) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF7FAFC))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text("📹", fontSize = 48.sp)
-                        Text(
-                            text = "Nessuna registrazione disponibile",
-                            fontSize = 16.sp,
-                            color = Color(0xFF718096),
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            }
-        } else {
-            items(recordings) { recording ->
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Thumbnail placeholder
-                        Box(
-                            modifier = Modifier
-                                .size(60.dp)
-                                .background(Color(0xFF1A202C), RoundedCornerShape(8.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("📹", fontSize = 24.sp, color = Color.White)
-                        }
-
-                        Spacer(modifier = Modifier.width(16.dp))
-
-                        Column(
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = recording.timestamp,
-                                fontSize = 12.sp,
-                                color = Color(0xFF718096)
-                            )
-                            Text(
-                                text = "Durata: ${recording.duration}",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF2D3748)
-                            )
-                            if (recording.hasMotion) {
-                                Text(
-                                    text = "🏃 Movimento rilevato",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFE53E3E)
-                                )
-                            }
-                        }
-
-                        IconButton(onClick = { }) {
-                            Text("▶️", fontSize = 20.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CameraStatusRow(
-    icon: String,
-    label: String,
-    value: String,
-    isGood: Boolean
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = icon, fontSize = 16.sp)
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = label,
-                fontSize = 14.sp,
-                color = Color(0xFF718096)
-            )
-        }
-
-        Text(
-            text = value,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            color = if (isGood) Color(0xFF38A169) else Color(0xFFE53E3E)
-        )
-    }
-}
-
-// Funzione helper per generare dati iniziali telecamera
-private fun generateInitialRecordings(): List<CameraRecording> {
-    return (1..8).map { index ->
-        val hoursAgo = index * 4
-        CameraRecording(
-            id = "rec_$index",
-            timestamp = "${hoursAgo}h fa",
-            duration = "${(3 + Math.random() * 12).toInt()} min",
-            hasMotion = Math.random() > 0.4
-        )
     }
 }

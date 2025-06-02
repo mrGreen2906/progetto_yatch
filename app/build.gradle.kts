@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("kotlinx-serialization")
 }
 
 android {
@@ -54,8 +55,8 @@ dependencies {
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
 
-    // JSON Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
+    // JSON Serialization - AGGIORNATO
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
     implementation("com.jakewharton.retrofit:retrofit2-kotlinx-serialization-converter:1.0.0")
 
     // Coroutines
@@ -65,8 +66,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.compose.runtime:runtime-livedata:1.5.4")
 
-    // WebView integration
+    // WebView integration - AGGIORNATO per telecamera
     implementation("androidx.compose.ui:ui-viewbinding:1.5.4")
+    implementation("androidx.webkit:webkit:1.9.0")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.7.5")
@@ -74,7 +76,7 @@ dependencies {
     // Lottie per animazioni
     implementation("com.airbnb.android:lottie-compose:6.1.0")
 
-    // Permessi runtime - SOLO QUESTA VERSIONE
+    // Permessi runtime
     implementation("com.google.accompanist:accompanist-permissions:0.28.0")
 
     // WorkManager per monitoraggio in background
@@ -82,6 +84,19 @@ dependencies {
 
     // SharedPreferences per configurazioni
     implementation("androidx.preference:preference-ktx:1.2.1")
+
+    // Coil per caricamento immagini - NUOVO per stream video
+    implementation("io.coil-kt:coil-compose:2.4.0")
+    implementation("io.coil-kt:coil-gif:2.4.0")
+
+    // Accompanist per WebView - NUOVO
+    implementation("com.google.accompanist:accompanist-webview:0.28.0")
+
+    // SwipeRefresh - NUOVO
+    implementation("com.google.accompanist:accompanist-swiperefresh:0.28.0")
+
+    // System UI Controller - NUOVO
+    implementation("com.google.accompanist:accompanist-systemuicontroller:0.28.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

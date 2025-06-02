@@ -8,12 +8,14 @@ import com.example.progetto_yatch.screens.WelcomeScreen
 import com.example.progetto_yatch.screens.LoadingScreen
 import com.example.progetto_yatch.screens.HomeScreen
 import com.example.progetto_yatch.screens.SecuritySystemScreen
+import com.example.progetto_yatch.screens.CameraStreamScreen
 
 sealed class Screen(val route: String) {
     object Welcome : Screen("welcome")
     object Loading : Screen("loading")
     object Home : Screen("home")
     object Security : Screen("security")
+    object CameraStream : Screen("camera_stream")
 }
 
 @Composable
@@ -46,12 +48,23 @@ fun AppNavigation() {
             HomeScreen(
                 onNavigateToSecurity = {
                     navController.navigate(Screen.Security.route)
+                },
+                onNavigateToCamera = {
+                    navController.navigate(Screen.CameraStream.route)
                 }
             )
         }
 
         composable(Screen.Security.route) {
             SecuritySystemScreen(
+                onBackPressed = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        composable(Screen.CameraStream.route) {
+            CameraStreamScreen(
                 onBackPressed = {
                     navController.popBackStack()
                 }

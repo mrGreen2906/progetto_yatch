@@ -17,6 +17,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!-- Permessi per WebView migliorata -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application
         android:name=".AlertifyApplication"
         android:allowBackup="true"
@@ -28,20 +32,23 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Progetto_yatch"
         android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true"
         tools:targetApi="31">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.Progetto_yatch">
+            android:theme="@style/Theme.Progetto_yatch"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Servizio di monitoraggio persistente -->
+        <!-- Servizio di monitoraggio sensori fumo -->
         <service
             android:name=".services.SmokeMonitoringForegroundService"
             android:enabled="true"
@@ -52,14 +59,39 @@
                 android:value="Monitoraggio sensori di sicurezza per emergenze" />
         </service>
 
+        <!-- NUOVO: Servizio di monitoraggio unificato (fumo + telecamera) -->
+        <service
+            android:name=".services.UnifiedMonitoringService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Monitoraggio completo sistema sicurezza: sensori fumo e telecamere" />
+        </service>
+
         <!-- Receiver per riavvio automatico del servizio -->
         <receiver android:name=".services.BootReceiver"
             android:enabled="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <data android:scheme="package" />
             </intent-filter>
         </receiver>
+
+        <!-- Provider per condivisione file se necessario -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
